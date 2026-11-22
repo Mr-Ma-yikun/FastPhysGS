@@ -1,0 +1,77 @@
+train:
+  seed: 0
+  gpu: 0
+  model_path: 'dataset/pillow2sofa'
+  export_path: './outputs'
+  train_tag: 
+  epochs: 3
+  enable_train: False
+  ckpt_interval: 1
+  ckpt_epoch: -1
+  export_video: True
+  video_interval: 1
+  prompt: "a wicker basket, a cushion and pillows"
+
+material:
+  center: [0.5, 0.5, 0.5]
+  size: [1.0, 1.0, 1.0]
+  rho: 1000.0
+  elasticity_physicals:
+    #- 'SigmaElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    #- 'StVKElasticity'
+    #- 'VolumeElasticity'
+  plasticity_physicals:
+    - 'IdentityPlasticity'
+    #- 'DruckerPragerPlasticity'
+    #- 'SigmaPlasticity'
+    #- 'VonMisesPlasticity'
+  elasticity: 'LLM'
+  plasticity: 'LLM'
+    
+render:
+  white_bg: True
+  mpm_space_vertical_upward_axis: [0, 0, 1]
+  mpm_space_viewpoint_center: [0.1, -0.1, 0.55]
+  default_camera_index: -1
+  show_hint: False
+  init_azimuthm: 170
+  init_elevation: 0
+  init_radius: 0.6
+  move_camera: False
+  delta_a: -0.4
+  delta_e: 0.8
+  delta_r: 0.0
+
+preprocessing:
+  scale_factor: 0.8
+  opacity_threshold: 0.02
+  rotation_degree: [0.0]
+  rotation_axis: [0]
+  sim_area:
+  particle_filling: 'True'
+
+sim:
+  num_grids: 100
+  dt: 3e-4
+  gravity: [0.0, 0.0, -9.8]
+  num_frames: 150
+  steps_per_frame: 10
+  clip_bound: 0.5
+  damping: 1.0
+  obj_idx: [0, 1, 2, 3]
+  fill_nums: [100000, 100000, 100000, 100000]
+  e_values: [3e6, 3e6, 3e6, 3e6]
+  boundary_conditions: 
+    - type: 'enforce_particle_translation'
+      point: [0.5, 0.5, 0.23]
+      size: [0.5, 0.5, 0.2]
+      velocity: [0, 0, 0]
+      start_time: 0
+      end_time: 1e3
+      
+  
+   

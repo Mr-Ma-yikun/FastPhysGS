@@ -1,0 +1,76 @@
+train:
+  seed: 0
+  gpu: 0
+  model_path: 'dataset/ficus'
+  export_path: './outputs'
+  train_tag: 
+  epochs: 2
+  enable_train: True
+  ckpt_interval: 1
+  ckpt_epoch: -1
+  export_video: True
+  video_interval: 1
+  prompt: "a ficus swaying in the wind"
+
+material:
+  center: [0.5, 0.5, 0.5]
+  size: [0.5, 0.5, 0.5]
+  rho: 200.0
+  elasticity_physicals:
+    #- 'SigmaElasticity'
+    - 'CorotatedElasticity'
+    #- 'StVKElasticity'
+    #- 'VolumeElasticity'
+  plasticity_physicals:
+    - 'IdentityPlasticity'
+    #- 'DruckerPragerPlasticity'
+    #- 'SigmaPlasticity'
+    #- 'VonMisesPlasticity'
+  elasticity: 'LLM'
+  plasticity: 'LLM'
+
+render:
+  white_bg: True
+  mpm_space_vertical_upward_axis: [0, 0, 1]
+  mpm_space_viewpoint_center: [0.6,0.5,0.6]
+  default_camera_index: -1
+  show_hint: False
+  init_azimuthm: -36.7
+  init_elevation: 8.96
+  init_radius: 4.11
+  move_camera: False
+  delta_a: 0.4
+  delta_e: 0.0
+  delta_r: 0.0
+
+preprocessing:
+  scale_factor: 1.0
+  opacity_threshold: 0.02
+  rotation_degree: [0.0]
+  rotation_axis: [0]
+  sim_area:
+  particle_filling: 'True'
+
+sim:
+  num_grids: 30
+  dt: 2e-4
+  gravity: [0.0, 0.0, 0.0]
+  num_frames: 150
+  steps_per_frame: 10
+  clip_bound: 0.5
+  damping: 0.999
+  obj_idx: [0]
+  fill_nums: [100000]
+  e_values: [4e5]
+  boundary_conditions: 
+    - type: 'cuboid'
+      point: [0.5, 0.5, 0.1]
+      size: [0.5, 0.5, 0.15]
+      velocity: [0, 0, 0]
+      start_time: 0
+      end_time: 1e3
+      reset: 1
+    - type: 'particle_impulse'
+      force: [3.5, 0, 0]
+      num_dt: 1
+      start_time: 0

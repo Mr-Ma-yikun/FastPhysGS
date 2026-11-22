@@ -1,0 +1,76 @@
+train:
+  seed: 0
+  gpu: 0
+  model_path: 'dataset/vasedeck'
+  export_path: './outputs'
+  train_tag: 
+  epochs: 2
+  enable_train: True
+  ckpt_interval: 1
+  ckpt_epoch: -1
+  export_video: True
+  video_interval: 1
+  prompt: "a vase swaying in the wind"
+
+material:
+  center: [0.5, 0.5, 0.5]
+  size: [1.0, 1.0, 1.0]
+  rho: 200.0
+  elasticity_physicals:
+    #- 'SigmaElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    - 'CorotatedElasticity'
+    #- 'StVKElasticity'
+    #- 'VolumeElasticity'
+  plasticity_physicals:
+    - 'IdentityPlasticity'
+    #- 'DruckerPragerPlasticity'
+    #- 'SigmaPlasticity'
+    #- 'VonMisesPlasticity'
+  elasticity: 'LLM'
+  plasticity: 'LLM'
+
+render:
+  white_bg: True
+  mpm_space_vertical_upward_axis: [0, 1, 0]
+  mpm_space_viewpoint_center: [1.5,0.7,0.6]
+  default_camera_index: 0
+  show_hint: False
+  init_azimuthm: 0
+  init_elevation: 0
+  init_radius: 5.0
+  move_camera: False
+  delta_a: 0.4
+  delta_e: 0.0
+  delta_r: 0.0
+
+preprocessing:
+  scale_factor: 1.0
+  opacity_threshold: 0.05
+  rotation_degree: [135.0]
+  rotation_axis: [0]
+  sim_area: [-2.25, 2.25, -5.01, -0.81, -1.95, 2.55]
+  particle_filling: 'True'
+
+sim:
+  num_grids: 30
+  dt: 2e-4
+  gravity: [0.0, 0.0, 0.0]
+  num_frames: 150
+  steps_per_frame: 10
+  clip_bound: 0.5
+  damping: 0.999
+  obj_idx: [0, 1, 2, 3]
+  fill_nums: [50000, 10000, 10000, 10000]
+  e_values: [4e5, 4e5, 4e5, 4e5]
+  boundary_conditions: 
+    - type: 'enforce_particle_velocity_rotation'
+      point: [0.52, 0.5, 0.48]
+      normal: [0.0, 1.0, 0.0]
+      half_height_and_radius: [0.5, 0.3]
+      rotation_scale: 20.0
+      translation_scale: 0.0
+      start_time: 0.0
+      end_time: 1e3
