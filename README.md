@@ -23,7 +23,7 @@ pip install -e third_party/gaussian-splatting/submodules/simple-knn/
 
 2. We use 3D Gaussian Splatting https://github.com/graphdeco-inria/gaussian-splatting as the scene representation. Please follow its guide to reconstruct your own scenes, or directly use the public 3DGS datasets adopted by PhysGaussian / Physics3D.
 
-## Demo
+## Run
 
 FastPhysGS directly takes a trained 3DGS scene as input. The data folder is organized as follows, where `point_cloud.ply` follows the original 3DGS format:
 
