@@ -169,7 +169,6 @@ def main(cfg, args=None):
     e_values = sim_params.e_values
     initial_e_value = torch.Tensor(e_values).log()
     log_E = nn.Parameter(initial_e_value.clone(), requires_grad=True)
-    optimizer = torch.optim.Adam([log_E], lr=1e-3)
     print("Initial Youngs E, Log_e:", e_values, initial_e_value)
 
     requires_grad = False
@@ -270,40 +269,40 @@ def main(cfg, args=None):
         defo_target = 0.1
         E_REF = 3e6
         with torch.no_grad():
-            eta = (0.1 * torch.log1p(log_E.detach().exp()) / math.log1p(E_REF)).clamp(max=1.0)
+            E = log_E.detach().exp()
+            eta = (0.1 * torch.log1p(E) / math.log1p(E_REF)).clamp(max=1.0)
 
         if frame_data:
-            optimizer.zero_grad()
-
             total_grad = torch.zeros_like(log_E)
             grad_count = 0
 
             for data in frame_data:
-                x_val = data['x'].requires_grad_(False)
-                v_val = data['v'].requires_grad_(False)
-                C_val = data['C'].requires_grad_(False)
-                F_val = data['F'].requires_grad_(True)
+                F_val = data['F'].detach()
 
                 with torch.enable_grad():
                     stress_keyframe = elasticity(F_val, labels, log_E)
-                    x_, v_, C_, F_ = mpm_model(x_val, v_val, C_val, F_val, stress_keyframe)
-                    F_ = plasticity(F_, labels, log_E)
-
                     stress_norm = torch.norm(stress_keyframe)
-                    grad_stress = torch.autograd.grad(stress_norm, log_E, retain_graph=True)[0]
-                    pseudo_grad = torch.log1p(grad_stress.abs())
+                    grad_stress = torch.autograd.grad(stress_norm, log_E)[0].detach()
+
+                grad_stress_E = grad_stress / E
+                relative_stress_sensitivity = E * grad_stress_E
+                pseudo_grad = torch.log1p(relative_stress_sensitivity.abs())
+
+                with torch.no_grad():
+                    x_val = data['x'].detach().clone()
+                    v_val = data['v'].detach().clone()
+                    C_val = data['C'].detach()
+                    _, _, _, F_ = mpm_model(x_val, v_val, C_val, F_val, stress_keyframe.detach())
+                    F_ = plasticity(F_, labels, log_E.detach())
 
                     I = torch.eye(3, device=F_.device, dtype=F_.dtype)
                     F_dev = F_ - I
                     frob_norm = torch.norm(F_dev, p='fro', dim=(-2, -1)).mean()
                     defo_error = frob_norm - defo_target
-
                     pseudo_defo = (18.0 * defo_error).to(log_E.device)
 
-                    total_grad += eta * pseudo_grad - (1 - eta) * pseudo_defo
-                    grad_count += 1
-
-                    optimizer.zero_grad()
+                total_grad += eta * pseudo_grad - (1 - eta) * pseudo_defo
+                grad_count += 1
 
             avg_grad = total_grad / grad_count
             print(' log_E old', log_E)
@@ -314,7 +313,7 @@ def main(cfg, args=None):
             print(' pesudo_defo:', pseudo_defo)
 
             with torch.no_grad():
-                log_E.data = log_E.data - avg_grad
+                log_E.copy_(log_E - avg_grad)
 
             print(f" log_E update: {log_E}")
 
