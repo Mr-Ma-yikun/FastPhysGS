@@ -159,6 +159,8 @@ def main(cfg, args=None):
 
     num_frames = sim_params.num_frames
     steps_per_frame = sim_params.steps_per_frame
+    if num_frames < 1 or steps_per_frame < 1:
+        raise ValueError('num_frames and steps_per_frame must be positive')
 
     load_material_checkpoint(
         ckpt_dir=os.path.join(export_path, 'checkpoints'),
@@ -207,7 +209,9 @@ def main(cfg, args=None):
         F = F_ckpt.clone().requires_grad_(False)
 
         frame_data = []
+        identity = torch.eye(3, device=F.device, dtype=F.dtype)
         for frame in tqdm(range(num_frames), desc='Frames'):
+            keyframe_data = None
             with torch.no_grad():
                 frame_id = frame
                 (
@@ -245,13 +249,14 @@ def main(cfg, args=None):
                     export_rendering(rendering, frame_id, folder=os.path.join(export_path, 'images'))
 
                 if frame in important_frames:
-
-                    frame_data.append({
-                        'x': x.clone(),
-                        'v': v.clone(),
-                        'C': C.clone(),
-                        'F': F.clone()
-                    })
+                    keyframe_data = {
+                        'x': x.detach().clone(),
+                        'v': v.detach().clone(),
+                        'C': C.detach().clone(),
+                        'F': F.detach().clone(),
+                        'time': mpm_model.time,
+                    }
+                    frame_data.append(keyframe_data)
 
             for step in range(steps_per_frame):
                 with torch.no_grad():
@@ -263,6 +268,10 @@ def main(cfg, args=None):
 
                     F = checkpoint(plasticity, F, labels, log_E.detach())
                     assert torch.all(torch.isfinite(F))
+                    if step == 0 and keyframe_data is not None:
+                        keyframe_data['deformation'] = torch.norm(
+                            F - identity, p='fro', dim=(-2, -1)
+                        ).mean().detach()
 
             torch.cuda.empty_cache()
 
@@ -284,20 +293,9 @@ def main(cfg, args=None):
                     stress_norm = torch.norm(stress_keyframe)
                     grad_stress = torch.autograd.grad(stress_norm, log_E)[0].detach()
 
-                grad_stress_E = grad_stress / E
-                relative_stress_sensitivity = E * grad_stress_E
-                pseudo_grad = torch.log1p(relative_stress_sensitivity.abs())
-
+                pseudo_grad = torch.log1p(grad_stress.abs())
                 with torch.no_grad():
-                    x_val = data['x'].detach().clone()
-                    v_val = data['v'].detach().clone()
-                    C_val = data['C'].detach()
-                    _, _, _, F_ = mpm_model(x_val, v_val, C_val, F_val, stress_keyframe.detach())
-                    F_ = plasticity(F_, labels, log_E.detach())
-
-                    I = torch.eye(3, device=F_.device, dtype=F_.dtype)
-                    F_dev = F_ - I
-                    frob_norm = torch.norm(F_dev, p='fro', dim=(-2, -1)).mean()
+                    frob_norm = data['deformation']
                     defo_error = frob_norm - defo_target
                     pseudo_defo = (18.0 * defo_error).to(log_E.device)
 
