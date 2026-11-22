@@ -12,6 +12,7 @@ import warp as wp
 import taichi as ti
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 from omegaconf import OmegaConf
 from tqdm.autonotebook import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -166,8 +167,9 @@ def main(cfg, args=None):
     )
 
     e_values = sim_params.e_values
-    initial_e_value = torch.as_tensor(e_values, device=torch_device, dtype=trans_pos.dtype).log()
+    initial_e_value = torch.Tensor(e_values).log()
     log_E = nn.Parameter(initial_e_value.clone(), requires_grad=True)
+    optimizer = torch.optim.Adam([log_E], lr=1e-3)
     print("Initial Youngs E, Log_e:", e_values, initial_e_value)
 
     requires_grad = False
@@ -249,93 +251,61 @@ def main(cfg, args=None):
                         'x': x.clone(),
                         'v': v.clone(),
                         'C': C.clone(),
-                        'F': F.clone(),
-                        'time': mpm_model.time
+                        'F': F.clone()
                     })
 
             for step in range(steps_per_frame):
                 with torch.no_grad():
-                    stress = elasticity(F, labels, log_E.detach())
+                    stress = checkpoint(elasticity, F, labels, log_E.detach())
                     assert torch.all(torch.isfinite(stress))
 
-                    x, v, C, F = mpm_model(x, v, C, F, stress)
+                    x, v, C, F = checkpoint(mpm_model, x, v, C, F, stress)
                     assert torch.all(torch.isfinite(x))
 
-                    F = plasticity(F, labels, log_E.detach())
+                    F = checkpoint(plasticity, F, labels, log_E.detach())
                     assert torch.all(torch.isfinite(F))
 
             torch.cuda.empty_cache()
 
-        bgdo_params = train_params.get('bgdo', {})
-        if frame_data and bgdo_params.get('enabled', True) and not (args and args.test):
-            bgdo_mode = bgdo_params.get('mode', 'legacy')
-            if bgdo_mode not in ('legacy', 'paper'):
-                raise ValueError('BGDO mode must be legacy or paper')
-            paper_mode = bgdo_mode == 'paper'
-            e_reference = 1.0 if paper_mode else float(bgdo_params.get('e_reference', 3e6))
-            eta_scale = 0.1 if paper_mode else float(bgdo_params.get('eta_scale', 0.1))
-            deformation_target = 0.0 if paper_mode else float(bgdo_params.get('deformation_target', 0.1))
-            deformation_scale = 1.0 if paper_mode else float(bgdo_params.get('deformation_scale', 18.0))
-            gradient_space = 'linear' if paper_mode else bgdo_params.get('gradient_space', 'log')
-            stress_aggregation = 'raw_mean' if paper_mode else bgdo_params.get('stress_aggregation', 'compressed_mean')
-            if e_reference <= 0 or eta_scale < 0 or deformation_scale < 0:
-                raise ValueError('Invalid BGDO calibration parameters')
-            if gradient_space not in ('log', 'linear'):
-                raise ValueError('BGDO gradient_space must be log or linear')
-            if stress_aggregation not in ('compressed_mean', 'raw_mean'):
-                raise ValueError('BGDO stress_aggregation must be compressed_mean or raw_mean')
+        defo_target = 0.1
+        E_REF = 3e6
+        with torch.no_grad():
+            eta = (0.1 * torch.log1p(log_E.detach().exp()) / math.log1p(E_REF)).clamp(max=1.0)
 
-            E = log_E.detach().exp()
-            eta_denominator = 1.0 if paper_mode else math.log1p(e_reference)
-            eta = (eta_scale * torch.log1p(E) / eta_denominator).clamp(max=1.0)
-            stress_gradients = []
-            deformations = []
-            saved_time = mpm_model.time
-            saved_grid_mv = mpm_model.grid_mv
-            saved_grid_m = mpm_model.grid_m
+        if frame_data:
+            optimizer.zero_grad()
 
-            try:
-                for data in frame_data:
-                    F_val = data['F'].detach()
+            total_grad = torch.zeros_like(log_E)
+            grad_count = 0
 
-                    with torch.enable_grad():
-                        stress_keyframe = elasticity(F_val, labels, log_E)
-                        stress_norm = torch.norm(stress_keyframe)
-                        grad_stress_log_E = torch.autograd.grad(stress_norm, log_E)[0].detach()
-                    grad_stress_E = grad_stress_log_E / E
-                    stress_gradients.append(
-                        grad_stress_log_E if gradient_space == 'log' else grad_stress_E
-                    )
+            for data in frame_data:
+                x_val = data['x'].requires_grad_(False)
+                v_val = data['v'].requires_grad_(False)
+                C_val = data['C'].requires_grad_(False)
+                F_val = data['F'].requires_grad_(True)
 
-                    with torch.no_grad():
-                        if paper_mode:
-                            F_trial = F_val
-                        else:
-                            mpm_model.time = data['time']
-                            _, _, _, F_trial = mpm_model(
-                                data['x'].detach().clone(), data['v'].detach().clone(),
-                                data['C'].detach(), F_val, stress_keyframe.detach()
-                            )
-                            F_trial = plasticity(F_trial, labels, log_E.detach())
-                        I = torch.eye(3, device=F_trial.device, dtype=F_trial.dtype)
-                        d_F = torch.norm(F_trial - I, p='fro', dim=(-2, -1)).mean()
-                        deformations.append(d_F)
-            finally:
-                mpm_model.time = saved_time
-                mpm_model.grid_mv = saved_grid_mv
-                mpm_model.grid_m = saved_grid_m
+                with torch.enable_grad():
+                    stress_keyframe = elasticity(F_val, labels, log_E)
+                    x_, v_, C_, F_ = mpm_model(x_val, v_val, C_val, F_val, stress_keyframe)
+                    F_ = plasticity(F_, labels, log_E)
 
-            stress_gradients = torch.stack(stress_gradients)
-            grad_stress = stress_gradients.mean(dim=0)
-            if stress_aggregation == 'raw_mean':
-                pseudo_grad = torch.log1p(grad_stress.abs())
-            else:
-                pseudo_grad = torch.log1p(stress_gradients.abs()).mean(dim=0)
-            d_F = torch.stack(deformations).mean()
-            defo_error = d_F - deformation_target
-            pseudo_defo = deformation_scale * defo_error
-            avg_grad = eta * pseudo_grad - (1 - eta) * pseudo_defo
+                    stress_norm = torch.norm(stress_keyframe)
+                    grad_stress = torch.autograd.grad(stress_norm, log_E, retain_graph=True)[0]
+                    pseudo_grad = torch.log1p(grad_stress.abs())
 
+                    I = torch.eye(3, device=F_.device, dtype=F_.dtype)
+                    F_dev = F_ - I
+                    frob_norm = torch.norm(F_dev, p='fro', dim=(-2, -1)).mean()
+                    defo_error = frob_norm - defo_target
+
+                    pseudo_defo = (18.0 * defo_error).to(log_E.device)
+
+                    total_grad += eta * pseudo_grad - (1 - eta) * pseudo_defo
+                    grad_count += 1
+
+                    optimizer.zero_grad()
+
+            avg_grad = total_grad / grad_count
             print(' log_E old', log_E)
             print(' eta:', eta)
             print(' grad_stress:', grad_stress)
@@ -344,11 +314,7 @@ def main(cfg, args=None):
             print(' pesudo_defo:', pseudo_defo)
 
             with torch.no_grad():
-                updated_log_E = log_E - avg_grad
-                updated_E = updated_log_E.exp()
-                if not (torch.isfinite(updated_E).all() and (updated_E > 0).all()):
-                    raise FloatingPointError('BGDO update produced an invalid Youngs modulus')
-                log_E.copy_(updated_log_E)
+                log_E.data = log_E.data - avg_grad
 
             print(f" log_E update: {log_E}")
 
@@ -402,12 +368,8 @@ if __name__ == '__main__':
         help="Save internal checkpoints."
     )
 
-    parser.add_argument('--paper', action='store_true', help='Use main-paper BGDO equations; keep scene and output settings unchanged.')
-
     args = parser.parse_args()
     cfg = OmegaConf.load(args.config)
-    if args.paper:
-        cfg.train.bgdo = {'mode': 'paper', 'enabled': True}
 
     if args.gpu is not None:
         cfg.train.gpu = args.gpu
